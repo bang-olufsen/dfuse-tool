@@ -8,7 +8,9 @@ import sys,struct,zlib,os
 from optparse import OptionParser
 from intelhex import IntelHex
 
-DEFAULT_DEVICE="0x0483:0xdf11"
+DEFAULT_DEVICE="0xFFFF:0xFFFF"
+DEFAULT_VERSION=65535
+DEFAULT_NAME="STM32"
 
 def named(tuple,names):
   return dict(zip(names.split(),tuple))
@@ -48,34 +50,34 @@ def parse(file,dump_images=False):
         print '    DUMPED IMAGE TO "%s"' % out
     if len(target):
       print "target %d: PARSE ERROR" % t
-  suffix = named(struct.unpack('<4H3sBI',data[:16]),'device product vendor dfu ufd len crc')
-  print 'usb: %(vendor)04x:%(product)04x, device: 0x%(device)04x, dfu: 0x%(dfu)04x, %(ufd)s, %(len)d, 0x%(crc)08x' % suffix
+  suffix = named(struct.unpack('<4H3sBI',data[:16]),'version product vendor dfu ufd len crc')
+  print 'device: %(vendor)04x:%(product)04x, version: %(version)d, dfu: 0x%(dfu)04x, %(ufd)s, %(len)d, 0x%(crc)08x' % suffix
   if crc != suffix['crc']:
     print "CRC ERROR: computed crc32 is 0x%08x" % crc
   data = data[16:]
   if data:
     print "PARSE ERROR"
 
-def build(file,targets,device=DEFAULT_DEVICE):
+def build(file,targets,device,version,name):
   data = ''
   for t,target in enumerate(targets):
     tdata = ''
     for image in target:
       tdata += struct.pack('<2I',image['address'],len(image['data']))+image['data']
-    tdata = struct.pack('<6sBI255s2I','Target',0,1,'ST...',len(tdata),len(target)) + tdata
+    tdata = struct.pack('<6sBI255s2I','Target',0,1,name,len(tdata),len(target)) + tdata
     data += tdata
   data  = struct.pack('<5sBIB','DfuSe',1,len(data)+11,len(targets)) + data
-  v,d=map(lambda x: int(x,0) & 0xFFFF, device.split(':',1))
-  data += struct.pack('<4H3sB',0,d,v,0x011a,'UFD',16)
+  vendor,product=map(lambda x: int(x,0) & 0xFFFF, device.split(':',1))
+  data += struct.pack('<4H3sB',version,product,vendor,0x011a,'UFD',16)
   crc   = compute_crc(data)
   data += struct.pack('<I',crc)
   open(file,'wb').write(data)
 
 if __name__=="__main__":
   usage = """
-%prog [-d|--dump] infile.dfu
-%prog {-b|--build} address:file.bin [-b address:file.bin ...] [{-D|--device}=vendor:device] outfile.dfu
-%prog {-i|--ihex} file.hex [-i file.hex ...] [{-D|--device}=vendor:device] outfile.dfu"""
+%prog -d infile.dfu
+%prog -b address:file.bin [-b address:file.bin ...] [-D|-v|-n] outfile.dfu
+%prog -i file.hex [-i file.hex ...] [-D|-v|-n] outfile.dfu"""
 
   parser = OptionParser(usage=usage)
   parser.add_option("-b", "--build", action="append", dest="binfiles",
@@ -83,7 +85,11 @@ if __name__=="__main__":
   parser.add_option("-i", "--ihex", action="append", dest="hexfiles",
     help="build a DFU file from given HEXFILES", metavar="HEXFILES")
   parser.add_option("-D", "--device", action="store", dest="device",
-    help="build for DEVICE, defaults to %s" % DEFAULT_DEVICE, metavar="DEVICE")
+    help="build with DEVICE, defaults to %s" % DEFAULT_DEVICE, metavar="DEVICE")
+  parser.add_option("-v", "--version", action="store", dest="version",
+    help="build with VERSION, defaults to %d" % DEFAULT_VERSION, metavar="VERSION")
+  parser.add_option("-n", "--name", action="store", dest="name",
+    help="build with NAME, defaults to %s" % DEFAULT_NAME, metavar="NAME")
   parser.add_option("-d", "--dump", action="store_true", dest="dump_images",
     default=False, help="dump contained images to current directory")
   (options, args) = parser.parse_args()
@@ -125,11 +131,17 @@ if __name__=="__main__":
     if options.device:
       device=options.device
     try:
-      v,d=map(lambda x: int(x,0) & 0xFFFF, device.split(':',1))
+      vendor,product=map(lambda x: int(x,0) & 0xFFFF, device.split(':',1))
     except:
       print "Invalid device '%s'." % device
       sys.exit(1)
-    build(outfile,[target],device)
+    version = DEFAULT_VERSION
+    if options.version:
+      version=int(options.version)
+    name = DEFAULT_NAME
+    if options.name:
+      name=options.name
+    build(outfile,[target],device,version,name)
   elif len(args)==1:
     infile = args[0]
     if not os.path.isfile(infile):
